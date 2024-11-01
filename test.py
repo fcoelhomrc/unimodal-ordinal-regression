@@ -2,6 +2,9 @@
 
 # silence warning when using this without GPU
 import warnings
+
+from skimage.data import data_dir
+
 warnings.filterwarnings('ignore', message="Can't initialize NVML")
 
 import argparse
@@ -13,6 +16,8 @@ parser.add_argument('--lamda')
 parser.add_argument('--reps', nargs='+', type=int)
 parser.add_argument('--print-lambda', action='store_true')
 parser.add_argument('--only-metric', type=int)
+parser.add_argument('--store-predictions', action='store_true')
+
 args = parser.parse_args()
 
 from torch.utils.data import DataLoader
@@ -20,6 +25,11 @@ from torchvision import transforms
 import torch
 import metrics, losses, data
 from models import MLP
+import os
+
+save_dir = "predictions"  # for saving predictions (predicted probas + ground truth label)
+if os.path.exists(save_dir):
+    os.mkdir(save_dir)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -72,9 +82,19 @@ def compute_metrics(rep, metrics_list):
         YY_pred.append(Yhat)
         YY_true.append(Y)
     YY_pred = torch.cat(YY_pred)
-    PP_pred = loss_fn.to_proba(YY_pred)
-    YY_pred = loss_fn.to_classes(YY_pred)
+    PP_pred = loss_fn.to_proba(YY_pred)  # class probabilities
+    YY_pred = loss_fn.to_classes(YY_pred)  # class labels
     YY_true = torch.cat(YY_true)
+
+    if args.store_predictions:
+        assert PP_pred.shape == YY_true.shape  # sanity check
+        torch.save(
+            PP_pred, os.path.join(save_dir, f"pred-{args.dataset}-{args.loss}-{rep}-lambda-{args.lamda}.pt")
+        )
+        torch.save(
+            YY_true, os.path.join(save_dir, f"true-{args.dataset}-{args.loss}-{rep}-lambda-{args.lamda}.pt")
+        )
+
     return torch.tensor([metric(PP_pred, YY_pred, YY_true) for metric in metrics_list], device=device)
 
 metrics_list = [
