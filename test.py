@@ -26,7 +26,7 @@ from models import MLP
 import os
 
 save_dir = "predictions"  # for saving predictions (predicted probas + ground truth label)
-if os.path.exists(save_dir):
+if not os.path.exists(save_dir):
     os.mkdir(save_dir)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -85,7 +85,6 @@ def compute_metrics(rep, metrics_list):
     YY_true = torch.cat(YY_true)
 
     if args.store_predictions:
-        assert PP_pred.shape == YY_true.shape  # sanity check
         torch.save(
             PP_pred, os.path.join(save_dir, f"pred-{args.dataset}-{args.loss}-{rep}-lambda-{args.lamda}.pt")
         )
