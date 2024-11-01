@@ -3,8 +3,6 @@
 # silence warning when using this without GPU
 import warnings
 
-from skimage.data import data_dir
-
 warnings.filterwarnings('ignore', message="Can't initialize NVML")
 
 import argparse
