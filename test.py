@@ -85,11 +85,15 @@ def compute_metrics(rep, metrics_list):
     YY_true = torch.cat(YY_true)
 
     if args.store_predictions:
+        if args.lamda is None:
+            tag = f'{args.dataset}-{args.loss}-{rep}'
+        else:
+            tag = f'{args.dataset}-{args.loss}-{rep}-lambda-{args.lamda}'
         torch.save(
-            PP_pred, os.path.join(save_dir, f"pred-{args.dataset}-{args.loss}-{rep}-lambda-{args.lamda}.pt")
+            PP_pred, os.path.join(save_dir, f"pred-{tag}.pt")
         )
         torch.save(
-            YY_true, os.path.join(save_dir, f"true-{args.dataset}-{args.loss}-{rep}-lambda-{args.lamda}.pt")
+            YY_true, os.path.join(save_dir, f"true-{tag}.pt")
         )
 
     return torch.tensor([metric(PP_pred, YY_pred, YY_true) for metric in metrics_list], device=device)
