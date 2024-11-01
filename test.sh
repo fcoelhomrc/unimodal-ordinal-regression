@@ -31,11 +31,11 @@ for DATASET in $DATASETS; do
         if [ $METRIC -eq 5 ]; then echo -n "ZME"; fi
         if [ $METRIC -eq 6 ]; then echo -n "NLL"; fi
         for LOSS in $LOSSES; do
-            python3 test.py $DATASET $LOSS --reps 1 2 3 4 --only-metric $METRIC
+            python3 test.py $DATASET $LOSS --reps 1 2 3 4 --only-metric $METRIC --store-predictions
         done
         for LOSS in $LOSSES_LAMBDA; do
             LAMBDA=`python3 test-best-lambda.py $DATASET $LOSS`
-            python3 test.py $DATASET $LOSS --reps 1 2 3 4 --lamda $LAMBDA --only-metric $METRIC
+            python3 test.py $DATASET $LOSS --reps 1 2 3 4 --lamda $LAMBDA --only-metric $METRIC --store-predictions
         done
         echo " \\\\"
     done
