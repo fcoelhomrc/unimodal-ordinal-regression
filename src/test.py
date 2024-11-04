@@ -22,10 +22,9 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 import torch
 import metrics, losses, data
-from models import MLP
 import os
 
-save_dir = "predictions"  # for saving predictions (predicted probas + ground truth label)
+save_dir = "../predictions"  # for saving predictions (predicted probas + ground truth label)
 if not os.path.exists(save_dir):
     os.mkdir(save_dir)
 

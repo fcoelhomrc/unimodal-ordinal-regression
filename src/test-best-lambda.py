@@ -11,13 +11,10 @@ parser.add_argument('loss')
 parser.add_argument('--datadir', default='/data/ordinal')
 args = parser.parse_args()
 
-from torchvision.models import resnet18
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from time import time
 import torch
 import metrics, losses, data
-from models import MLP
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 

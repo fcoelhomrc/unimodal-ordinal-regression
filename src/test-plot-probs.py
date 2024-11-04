@@ -12,7 +12,6 @@ args = parser.parse_args()
 
 import torch
 from torchvision import transforms
-import matplotlib.pyplot as plt
 from tqdm import tqdm
 import data, losses
 import os, sys
