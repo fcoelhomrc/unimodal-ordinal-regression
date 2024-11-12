@@ -33,7 +33,7 @@ class EnsembleDataset(Dataset):
             xx.append(x); yy.append(y)
 
         self.inputs = torch.stack(xx)  # shape: L, N, K -> losses, samples, classes
-        self.labels = torch.stack(yy)  # shape: L, N, 1 -> losses, samples,
+        self.labels = torch.stack(yy)[0, :]  # shape: N -> losses, samples,
 
     @staticmethod
     def _is_valid_key(key):
@@ -44,11 +44,14 @@ class EnsembleDataset(Dataset):
         return self.inputs.shape[1]
 
     def __getitem__(self, item):
-        return self.inputs[:, item], self.labels[:, item]
+        return self.inputs[:, item], self.labels[item]
 
 
 
 if __name__ == "__main__":
+
+    from src.metrics import *
+
     ds = EnsembleDataset(dataset="FOCUSPATH",
                          loss=["BinomialUnimodal_CE", "PoissonUnimodal"],
                          rev=1)
@@ -56,6 +59,3 @@ if __name__ == "__main__":
 
     batch_size = 32
     dl = DataLoader(ds, batch_size=batch_size, shuffle=True)
-    for x, y in dl:
-        print(x.shape, y.shape)
-        break
