@@ -258,6 +258,7 @@ class BinomialUnimodal_MSE(BinomialUnimodal_CE):
 ################################################################################
 
 class PoissonUnimodal(OrdinalLoss):
+    # TODO: possible bug?  This represents class labels from 1 to K, but others do from 0 to K-1...
     def how_many_outputs(self):
         return 1
 
@@ -282,6 +283,24 @@ class PoissonUnimodal(OrdinalLoss):
 #                                                                              #
 ################################################################################
 
+class RoundedReLU(torch.autograd.Function):
+    """
+    How to implement customized backward pass:
+    https://gist.github.com/Hanrui-Wang/bf225dc0ccb91cdce160539c0acc853a
+    """
+    @staticmethod
+    def forward(ctx, input):
+        ctx.save_for_backward(input)
+        return F.relu(input).round()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, = ctx.saved_tensors
+        grad_input = grad_output.clone()
+        grad_input[input < 0] = 0
+        return grad_input
+
+
 class NegativeBinomialUnimodal(OrdinalLoss):
     def how_many_outputs(self):
         return 2
@@ -291,9 +310,9 @@ class NegativeBinomialUnimodal(OrdinalLoss):
         return F.nll_loss(log_probs, ytrue, reduction='none')
 
     def to_proba(self, ypred):
-        # it is numerically better to operate in the log-space due to precision
-        # overflows introduced by the factorial.
-        return torch.exp(self.to_log_proba(ypred))
+        # need to re-normalize since we are truncating the distribution
+        log_probs = self.to_log_proba(ypred)
+        return F.softmax(log_probs, 1)
 
     def to_log_proba(self, ypred):
         # used internally by the loss in compute_loss()
@@ -301,15 +320,20 @@ class NegativeBinomialUnimodal(OrdinalLoss):
         # N -> batch size
         # ypred[:, 0] -> p (probability)
         # ypred[:, 1] -> r (integer valued)
-        # TODO: finish implementing!
-        device = ypred.device
-        log_probs = F.logsigmoid(ypred[:, 0])
-        log_inv_probs = F.logsigmoid(-ypred[:, 0])
-        N = ypred.shape[0]
-        K = torch.tensor(self.K, dtype=torch.float, device=device)
-        kk = torch.ones((N, self.K), device=device) * torch.arange(self.K, dtype=torch.float, device=device)[None]
-        num = log_fact(K-1) + kk*log_probs + (K-kk-1)*log_inv_probs
-        den = log_fact(kk) + log_fact(K-kk-1)
+        # TODO: debug implementation!
+
+        log_probs = F.logsigmoid(ypred[:, 0]).reshape(-1, 1)
+        log_inv_probs = F.logsigmoid(-ypred[:, 0]).reshape(-1, 1)
+        rr = RoundedReLU.apply(ypred[:, 1]).reshape(-1, 1)  # ensures integer valued 0, 1, 2, ...
+
+        print(f"p: {torch.exp(log_probs)}")
+        print(f"log p: {log_probs}")
+        print(f"rr: {rr}")
+
+
+        KK = torch.arange(1., self.K + 1, device=ypred.device).reshape(1, -1)
+        num = log_fact(KK + rr - 1) + ((KK - 1) * log_inv_probs) + (rr * log_probs)
+        den = log_fact(KK) + log_fact(rr)
         return num - den
 
 class PolyaUnimodal(OrdinalLoss):
@@ -318,9 +342,6 @@ class PolyaUnimodal(OrdinalLoss):
 
     def forward(self, ypred, ytrue):
         log_probs = self.to_log_proba(ypred)
-        print(f"ypred: {ypred.shape} {ypred.dtype}")
-        print(f"log_probs: {log_probs.shape} {ypred.dtype}")
-        print(f"ytrue: {ytrue.shape} {ypred.dtype}")
         return F.nll_loss(log_probs, ytrue, reduction='none')
 
     def to_proba(self, ypred):
@@ -334,19 +355,9 @@ class PolyaUnimodal(OrdinalLoss):
         # N -> batch size
         # ypred[:, 0] -> p (probability)
         # ypred[:, 1] -> r (positive real valued (see Poisson...))
-        # TODO: finish implementing! Equation ok, need to debug shapes + test model
-        # TODO: why is class K=1 always proba = 0?????????
         log_probs = F.logsigmoid(ypred[:, 0]).reshape(-1, 1)
         log_inv_probs = F.logsigmoid(-ypred[:, 0]).reshape(-1, 1)
         rr = F.softplus(ypred[:, 1]).reshape(-1, 1)
-
-        print(f"p: {torch.exp(log_probs)}")
-        print(f"1 - p: {torch.exp(log_inv_probs)}")
-        print(f"r: {rr}")
-
-        print(f"log_probs: {log_probs.shape}")
-        print(f"log_inv_probs: {log_inv_probs.shape}")
-        print(f"rr: {rr.shape}")
 
         # canonically: support is 0, 1, 2, ..., +inf
         # so we need to truncate to [0, ..., K-1] (requires re-normalization...)
@@ -354,15 +365,24 @@ class PolyaUnimodal(OrdinalLoss):
         # also transform x -> x' = x + 1
         # so the classes are mapped to [1, ..., K]
         KK = torch.arange(1., self.K + 1, device=ypred.device).reshape(1, -1)
-
-        print(f"KK: {KK.shape}")
-
         num = log_fact(KK + rr - 1) + ((KK - 1) * log_inv_probs) + (rr * log_probs)
         den = log_fact(KK) + log_fact(rr)
-        print(f"den: {den.shape}")
-        print(f"num: {num.shape}")
-
         return num - den
+
+
+class PolyaUnimodal_Regularized(PolyaUnimodal):
+    """
+    Induce the variance to keep most of the spread between [1, 2, ..., K]
+    """
+    def __init__(self, K, lamda=100.):
+        super().__init__(K)
+        self.lamda = lamda
+
+    def forward(self, ypred, ytrue):
+        nll_loss = super().forward(ypred, ytrue)
+        norm = ypred.sum(dim=1)
+        norm_loss = torch.abs(1. - norm)
+        return nll_loss + (self.lamda * norm_loss)
 
 
 ################################################################################
@@ -701,63 +721,3 @@ class WassersteinUnimodal_KLDIV(OrdinalLoss):
 class WassersteinUnimodal_Wass(WassersteinUnimodal_KLDIV):
     def distance_loss(self, phat, phat_log, target):
         return emd(phat, target)
-
-
-
-if __name__ == "__main__":
-    import torch
-
-    N = 2**3
-    K_classes = 12
-    K_outputs = 2
-
-    ps = torch.rand(size=(N, 1))
-    rs = torch.randint(0, 2*K_classes, size=(N, 1))
-    dummy = torch.stack((ps, rs), dim=1)
-
-    dummy_gt = torch.randint(0, K_classes, size=(N,))
-
-    polya = PolyaUnimodal(K_classes)
-
-    print(f"fake model output: {dummy}")
-    print(f"fake labels: {dummy_gt}")
-    print(f"N: {N}, outputs: {K_outputs}, classes: {K_classes}")
-
-    nll = polya(dummy, dummy_gt)
-    logits = polya.to_log_proba(dummy)
-    probas = polya.to_proba(dummy)
-
-    print(f"nll: {nll.shape}")
-    print(f"logits: {logits.shape}")
-    print(f"probas: {probas.shape}")
-
-
-    print(f"nll: {nll}")
-    print(f"logits: {logits}")
-    print(f"probas: {probas}")
-
-    print(f"is probas normalized?: {probas.sum(dim=1)}")
-
-    import numpy as np
-    import matplotlib.pyplot as plt
-    classes = torch.arange(1, K_classes + 1)
-
-
-    def rand_jitter(arr):
-        stdev = .01 * (max(arr) - min(arr))
-        return arr + torch.rand(len(arr)) * stdev
-    def jitter(ax, x, y, s=20, marker='o', cmap=None, norm=None, vmin=None, vmax=None, alpha=None, linewidths=None,
-               verts=None, hold=None, **kwargs):
-        ax.scatter(rand_jitter(x), rand_jitter(y), s=s, marker=marker, cmap=cmap, norm=norm, vmin=vmin,
-                   vmax=vmax, alpha=alpha, linewidths=linewidths, **kwargs)
-
-    plt.figure()
-    ax = plt.gca()
-    for i in range(N):
-        ax.plot(classes, probas[i], alpha=0.5)
-        plt.title("Polya model")
-        plt.xlabel("Classes")
-        plt.ylabel("Probability")
-    plt.grid(axis="both")
-    plt.ylim(0, 1.)
-    plt.show()
