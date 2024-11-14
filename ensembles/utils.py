@@ -12,10 +12,10 @@ from src.data import FOCUSPATH
 ROOT_DIR = os.path.join("..", "predictions")
 
 class EnsembleDataset(Dataset):
-    def __init__(self, dataset: str, loss: list, rev: int):
+    def __init__(self, dataset: str, loss: list, rep: int):
         self.name = dataset.upper()
         self.loss = loss
-        self.rev = rev
+        self.rev = rep
 
         self.inputs = None
         self.labels = None
@@ -52,9 +52,7 @@ if __name__ == "__main__":
 
     from src.metrics import *
 
-    ds = EnsembleDataset(dataset="FOCUSPATH",
-                         loss=["BinomialUnimodal_CE", "PoissonUnimodal"],
-                         rev=1)
+    ds = EnsembleDataset(dataset="FOCUSPATH", loss=["BinomialUnimodal_CE", "PoissonUnimodal"], rep=1)
     print(len(ds))
 
     batch_size = 32
