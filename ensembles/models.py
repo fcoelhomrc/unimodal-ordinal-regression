@@ -15,6 +15,7 @@ from torch.utils.data import Dataset, DataLoader
 import lightning as L
 
 from ensembles.utils import EnsembleDataset
+from src.losses import unimodal_wasserstein
 
 
 class BaseEnsemble(L.LightningModule):
@@ -80,26 +81,103 @@ class ConvolutionEnsemble(BaseEnsemble):
         _, L, K = inputs.shape
         base_probas = inputs[:, 0]  # first base model
         for i in range(1, L):  # convolve with every other base model
-            base_probas = convolve(base_probas, inputs[:, i], mode="same")
+            padding = base_probas.shape[-1] - 1
+            padded_inputs = nn.functional.pad(inputs[:, i], pad=(0, padding), mode='constant', value=0)
+            base_probas = convolve(base_probas, padded_inputs, mode="full")
+        # base_probas = nn.functional.adaptive_avg_pool1d(base_probas, K)
         base_probas /= base_probas.sum(dim=1, keepdim=True)
+        labels = base_probas.argmax(dim=1) // L  # very messy, see test-convolution-approach.py
+        return base_probas, labels
+
+class NaiveWassersteinEnsemble(BaseEnsemble):
+    """
+    Base models should be
+    - any (hard or soft) unimodal
+    Ensemble should guarantee unimodality
+    PROBLEM: Optimized solution is an uniform distribution
+    """
+    def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
+        # inputs - B, L, K
+        # outputs - B,
+        _, L, K = inputs.shape
+
+        base_probas = inputs[:, 0]  # first base model
+        for i in range(1, L):  # wasserstein projection with every other model
+            modes = inputs[:, i].argmax(dim=1)
+            base_probas /= base_probas.sum(dim=1, keepdim=True)
+            base_probas = torch.stack([
+                torch.tensor(unimodal_wasserstein(phat, y)[1], dtype=torch.float32, device=inputs.device)
+                for phat, y in zip(base_probas.cpu().detach().numpy(), modes.cpu().detach().numpy())
+            ])  # need to iterate over batch + use numpy arrays instead of tensors
         labels = base_probas.argmax(dim=1)
         return base_probas, labels
+
+class WassersteinEnsemble(BaseEnsemble):
+    """
+    Base models should be
+    - any (hard or soft) unimodal
+    Ensemble should guarantee unimodality
+    """
+    def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
+        # inputs - B, L, K
+        # outputs - B,
+        _, L, K = inputs.shape
+
+        modes = inputs.argmax(dim=2)
+        yproj = torch.stack([
+            torch.stack([
+                torch.tensor(unimodal_wasserstein(phat / phat.sum(), y)[1], dtype=torch.float32, device=inputs.device)
+                for phat, y in zip(inputs[:, i].cpu().detach().numpy(), modes[:, i].cpu().detach().numpy())
+            ]) for i in range(L)
+        ]).swapdims(0, 1)
+
+        # TODO: remove this...
+        debug_projection = False
+        if debug_projection:
+            nnn = 8
+            for i in range(nnn):
+                xxx = inputs[i]
+                yyy = yproj[i]
+                fig, axs = plt.subplots(2, L//2, figsize=(16, 6))
+                counter = 0
+                for j in range(L):
+                    axs.flatten()[counter].plot(xxx[j].cpu().detach().numpy(), label="input")
+                    axs.flatten()[counter].plot(yyy[j].cpu().detach().numpy(), label="projection")
+                    axs.flatten()[counter].set_title(f'L={j}')
+                    axs.flatten()[counter].grid(True)
+                    axs.flatten()[counter].legend(loc='best')
+                    counter += 1
+                fig.suptitle(f'Sample {i}')
+                fig.tight_layout()
+                fig.show()
+            print("done!")
+
+
+        labels = yproj.argmax(dim=2, keepdim=True)
+        return torch.median(labels, dim=1, keepdim=True)[0].squeeze()
+
+
+
 
 
 
 if __name__ == "__main__":
 
     plt.figure()
+    losses = [
+        "CrossEntropy", "POM", "OrdinalEncoding", "CDW_CE", "UnimodalNet"
+    ]
 
     losses = [
-        "BinomialUnimodal_CE", "PoissonUnimodal", "UnimodalNet"
+    "CrossEntropy", "POM", "OrdinalEncoding", "CDW_CE", "UnimodalNet",
+    "PoissonUnimodal", "VS_SL", "ORD_ACL", "CrossEntropy_UR", "BinomialUnimodal_CE",
     ]
 
     results = {loss: [] for loss in losses}
     results["Ensemble"] = []
-    # revs = [1, 2, 3, 4]
-    revs = [1]
-    model = ConvolutionEnsemble()
+    revs = [1, 2, 3, 4]
+    # revs = [1]
+    model = WassersteinEnsemble()
 
     compute_single = False
     for rev in revs:
@@ -107,53 +185,31 @@ if __name__ == "__main__":
         for loss in losses:
             if not compute_single:
                 break
-            ds = EnsembleDataset(dataset="FOCUSPATH",
-                                 loss=[loss],
-                                 rev=rev)
+            ds = EnsembleDataset(dataset="FOCUSPATH", loss=[loss], rep=rev)
             batch_size = 32
             dl = DataLoader(ds, batch_size=batch_size, shuffle=True)
 
             total_acc = 0
             for x, y in dl:
-                probas, ypred = model(x)
+                ypred = model(x)
                 acc = (ypred == y).sum()
                 total_acc += acc.item()
             total_acc /= len(ds)
-            # print(f"{loss} -> {total_acc:3f}")
+            print(f"{loss} -> {total_acc:3f}")
             results[loss].append(total_acc)
 
         # Compute with all at same time
-        ds = EnsembleDataset(dataset="FOCUSPATH",
-                             loss=losses,
-                             rev=rev)
+        ds = EnsembleDataset(dataset="FOCUSPATH", loss=losses, rep=rev)
         batch_size = 32
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True)
 
-        do_single_plot = True
         total_acc = 0
         for x, y in dl:
-            probas, ypred = model(x)
+            ypred = model(x)
             acc = (ypred == y).sum()
             total_acc += acc.item()
 
-            if do_single_plot:
-                _, num_models, classes = x.shape
-                cls = np.arange(1, classes+1)
-                for i in range(num_models):
-                    plt.plot(cls, x[0, i].cpu(), label=losses[i], ls="-", lw=1.0, alpha=0.9)
-                plt.plot(cls, probas[0].cpu(), label="Ensemble", ls="-", c="k", lw=2.5)
-
-                plt.legend()
-                plt.grid()
-                plt.xlabel("Classes")
-                plt.ylabel("Probability")
-                plt.ylim(0, 1.0)
-                plt.title("Ensemble v.s. Base Models")
-                plt.show()
-                do_single_plot = False
-
         total_acc /= len(ds)
-        # print(f"Ensemble -> {total_acc:3f}")
         results["Ensemble"].append(total_acc)
 
     for key, value in results.items():
