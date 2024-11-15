@@ -258,7 +258,6 @@ class BinomialUnimodal_MSE(BinomialUnimodal_CE):
 ################################################################################
 
 class PoissonUnimodal(OrdinalLoss):
-    # TODO: possible bug?  This represents class labels from 1 to K, but others do from 0 to K-1...
     def how_many_outputs(self):
         return 1
 
@@ -307,7 +306,7 @@ class NegativeBinomialUnimodal(OrdinalLoss):
 
     def forward(self, ypred, ytrue):
         log_probs = self.to_log_proba(ypred)
-        return F.nll_loss(log_probs, ytrue, reduction='none')
+        return ce(log_probs, ytrue)
 
     def to_proba(self, ypred):
         # need to re-normalize since we are truncating the distribution
@@ -320,16 +319,10 @@ class NegativeBinomialUnimodal(OrdinalLoss):
         # N -> batch size
         # ypred[:, 0] -> p (probability)
         # ypred[:, 1] -> r (integer valued)
-        # TODO: debug implementation!
 
         log_probs = F.logsigmoid(ypred[:, 0]).reshape(-1, 1)
         log_inv_probs = F.logsigmoid(-ypred[:, 0]).reshape(-1, 1)
         rr = RoundedReLU.apply(ypred[:, 1]).reshape(-1, 1)  # ensures integer valued 0, 1, 2, ...
-
-        print(f"p: {torch.exp(log_probs)}")
-        print(f"log p: {log_probs}")
-        print(f"rr: {rr}")
-
 
         KK = torch.arange(1., self.K + 1, device=ypred.device).reshape(1, -1)
         num = log_fact(KK + rr - 1) + ((KK - 1) * log_inv_probs) + (rr * log_probs)
@@ -342,7 +335,7 @@ class PolyaUnimodal(OrdinalLoss):
 
     def forward(self, ypred, ytrue):
         log_probs = self.to_log_proba(ypred)
-        return F.nll_loss(log_probs, ytrue, reduction='none')
+        return ce(log_probs, ytrue)
 
     def to_proba(self, ypred):
         # need to re-normalize since we are truncating the distribution
@@ -379,10 +372,10 @@ class PolyaUnimodal_Regularized(PolyaUnimodal):
         self.lamda = lamda
 
     def forward(self, ypred, ytrue):
-        nll_loss = super().forward(ypred, ytrue)
+        ce_loss = super().forward(ypred, ytrue)
         norm = ypred.sum(dim=1)
         norm_loss = torch.abs(1. - norm)
-        return nll_loss + (self.lamda * norm_loss)
+        return ce_loss + (self.lamda * norm_loss)
 
 
 ################################################################################
