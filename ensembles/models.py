@@ -45,6 +45,11 @@ class BaseEnsemble(L.LightningModule):
         pass
 
 
+class DummyEnsemble(BaseEnsemble):
+    def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
+        return inputs
+
+
 
 class MedianEnsemble(BaseEnsemble):
     """
