@@ -163,6 +163,15 @@ class WassersteinEnsemble(BaseEnsemble):
 
 
 
+def wasserstein_ensemble_objective(X):
+    """
+    :param X: shape = (base_model, classes)
+    :return y: shape = (classes, )
+    """
+    pass
+
+
+
 
 
 
