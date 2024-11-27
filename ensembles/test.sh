@@ -2,8 +2,7 @@
 
 TABULAR_DATASETS=""
 IMAGE_DATASETS="FOCUSPATH"
-LOSSES="PolyaUnimodal NegativeBinomialUnimodal BinomialUnimodal_CE PoissonUnimodal"
-#LOSSES_LAMBDA="PolyaUnimodal_Regularized"
+LOSSES="CrossEntropy POM OrdinalEncoding CDW_CE BinomialUnimodal_CE PoissonUnimodal ORD_ACL VS_SL UnimodalNet CrossEntropy_UR"
 LOSSES_LAMBDA=""
 
 for DATASETS_TYPE in "TABULAR" "IMAGE"; do
@@ -28,15 +27,15 @@ for DATASET in $DATASETS; do
         if [ $METRIC -eq 1 ]; then echo -n "MAE"; fi
         if [ $METRIC -eq 2 ]; then echo -n "QWK"; fi
         if [ $METRIC -eq 3 ]; then echo -n "\%$\tau$"; fi
-        if [ $METRIC -eq 4 ]; then echo -n "\%Unimodal"; fi
+        # if [ $METRIC -eq 4 ]; then echo -n "\%Unimodal"; fi
         if [ $METRIC -eq 5 ]; then echo -n "ZME"; fi
-        if [ $METRIC -eq 6 ]; then echo -n "NLL"; fi
+        # if [ $METRIC -eq 6 ]; then echo -n "NLL"; fi
         for LOSS in $LOSSES; do
-            python3 test.py $DATASET $LOSS --reps 1 2 3 4 --only-metric $METRIC --store-predictions --datadir=../datasets
+            python3 test.py $DATASET $LOSS --reps 1 2 3 4 --only-metric $METRIC --store-predictions
         done
         for LOSS in $LOSSES_LAMBDA; do
             LAMBDA=`python3 test-best-lambda.py $DATASET $LOSS`
-            python3 test.py $DATASET $LOSS --reps 1 2 3 4 --lamda $LAMBDA --only-metric $METRIC --store-predictions --datadir=../datasets
+            python3 test.py $DATASET $LOSS --reps 1 2 3 4 --lamda $LAMBDA --only-metric $METRIC --store-predictions
         done
         echo " \\\\"
     done
