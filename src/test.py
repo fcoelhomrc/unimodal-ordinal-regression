@@ -4,6 +4,8 @@
 import warnings
 
 warnings.filterwarnings('ignore', message="Can't initialize NVML")
+warnings.filterwarnings('ignore', category=FutureWarning)
+
 
 import argparse
 parser = argparse.ArgumentParser()
