@@ -13,16 +13,18 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Selected device: {device}")
 
 models = [
-    "PoissonUnimodal", "BinomialUnimodal_CE",
-    "PolyaUnimodal", "NegativeBinomialUnimodal"
+    # "PoissonUnimodal",
+    # "BinomialUnimodal_CE",
+    "PolyaUnimodal",
+    # "NegativeBinomialUnimodal"
 ]
 
 print(f"Selected models: {models}")
 
 datasets = [
     "FOCUSPATH",
-    "FGNET",
-    "SMEAR2005"
+    # "FGNET",
+    # "SMEAR2005"
 ]
 reps = [1, 2, 3, 4]
 
@@ -73,20 +75,23 @@ def plot_probas(dataset, rep, model_name):
 
 for dataset in datasets:
     for model_name in models:
-        rep = 1
+        rep = 0
         plot_probas(dataset, rep, model_name)
 
 
 
-exit()
 #############
 
 def compute_metrics(dataset, rep, model_name, metrics_list):
+
+    device = "cpu"
 
     # model = torch.load(model_name, map_location=device)
     model = DummyEnsemble()
     ds = EnsembleDataset(dataset=dataset, loss=[model_name], rep=rep)
     ts = DataLoader(ds, 64)
+
+    model.to(device)
 
     YY_pred = []
     YY_true = []
@@ -95,13 +100,14 @@ def compute_metrics(dataset, rep, model_name, metrics_list):
         Y = Y.to(device)
         with torch.no_grad():
             Yhat = model(X)  # class labels
+            PP_pred = Yhat[:, 0]
+            Yhat = PP_pred.argmax(dim=1)
         YY_pred.append(Yhat)
         YY_true.append(Y)
     YY_pred = torch.cat(YY_pred)
     # PP_pred = loss_fn.to_proba(YY_pred)  # class probabilities
     # YY_pred = loss_fn.to_classes(YY_pred)  # class labels
     YY_true = torch.cat(YY_true)
-    PP_pred = None
     return torch.tensor([metric(PP_pred, YY_pred, YY_true) for metric in metrics_list], device=device)
 
 
@@ -120,34 +126,19 @@ metrics_list = [
     src.metrics.mae,
     src.metrics.Percentage(src.metrics.quadratic_weighted_kappa),
     src.metrics.Percentage(src.metrics.kendall_tau),
-    # src.metrics.Percentage(src.metrics.times_unimodal_wasserstein),  # needs probas
+    src.metrics.Percentage(src.metrics.times_unimodal_wasserstein),  # needs probas
     src.metrics.zero_mean_error,
-    # src.metrics.negative_log_likelihood,  # needs probas
+    src.metrics.negative_log_likelihood,  # needs probas
 ]
 precisions = [1, 2, 1, 1, 1, 2, 2]
 
-# if args.only_metric is not None:
-#    metrics_list = [metrics_list[args.only_metric]]
-#    precisions = [precisions[args.only_metric]]
-
-# TODO: implement this with script arguments
-# results = torch.stack([compute_metrics(rep, metrics_list) for rep in args.reps])
-
 for dataset in datasets:
     for model_name in models:
+        reps = [0]
         results = torch.stack([compute_metrics(dataset, rep, model_name, metrics_list) for rep in tqdm(reps)])
 
-        #print(args.loss.replace('_', r'\_'), end='')
-        #print(args.dataset, args.loss, sep=' & ', end='')
-        # if args.print_lambda:
-        #     print(f' & {args.lamda}', end='')
-        # if len(args.reps) == 1:
-        #     print(' & ' + ' & '.join([f'{result:.{precision}f}' for precision, result in zip(precisions, results[0])]), end='') # + r' \\')
-        # else:
-        #     stds = [torch.std(r[~r.isnan()]) for r in results.T]
-        #     print(' & ' + ' & '.join([f'${mean:.{precision}f}\\color{{gray}}\\pm{std:.{precision}f}$' for precision, mean, std in zip(precisions, results.nanmean(0), stds)]), end='') # + r' \\')
-
-        stds = [torch.std(r[~r.isnan()]) for r in results.T]
+        # stds = [torch.std(r[~r.isnan()]) for r in results.T]
+        stds = [0 for r in results.T]
         print(f'{dataset} {model_name}')
         print(''.join([f'{name}: {mean:.{precision}f} +- {std:.{precision}f}\n' for name, precision, mean, std in zip(metrics_names, precisions, results.nanmean(0), stds)]), end='')
         # print(' & ' + ' & '.join([f'${mean:.{precision}f}\\color{{gray}}\\pm{std:.{precision}f}$' for precision, mean, std in zip(precisions, results.nanmean(0), stds)]), end='') # + r' \\')
