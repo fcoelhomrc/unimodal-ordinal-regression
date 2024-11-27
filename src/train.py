@@ -1,4 +1,6 @@
 import argparse
+import os
+
 parser = argparse.ArgumentParser()
 parser.add_argument('dataset')
 parser.add_argument('loss')
@@ -50,7 +52,7 @@ if ds.modality == 'tabular':
 else:
     model = resnet18(weights=ResNet18_Weights.DEFAULT)
     model.fc = torch.nn.Linear(512, loss_fn.how_many_outputs())
-    epochs = 100
+    epochs = 10 # 25 # 100 TODO: do not commit this change
 loss_fn.to(device)
 model = model.to(device)
 model.loss_fn = loss_fn
@@ -81,4 +83,4 @@ for epoch in range(epochs):
     train_time += toc-tic
 
 model.train_time = train_time
-torch.save(model.cpu(), args.output)
+torch.save(model.cpu(), os.path.join(os.getcwd(), f"model-{args.dataset}-{args.loss}-{args.rep}.pth"))  # TODO: do not commit this change
