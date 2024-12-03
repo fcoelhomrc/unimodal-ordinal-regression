@@ -1,9 +1,9 @@
 import os
 from typing import Any
 
+import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import pandas as pd
 
 import torch
 import torch.nn as nn
@@ -20,29 +20,30 @@ from src.losses import unimodal_wasserstein
 
 class BaseEnsemble(L.LightningModule):
 
-    def __init__(self):
-        super().__init__()
+        def __init__(self):
+            super().__init__()
 
-    def setup(self, stage: str) -> None:
-        pass
+        def setup(self, stage: str) -> None:
+            pass
 
-    def forward(self, *args: Any, **kwargs: Any) -> Any:
-        pass
+        def forward(self, *args: Any, **kwargs: Any) -> Any:
+            pass
 
-    def training_step(self, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
-        pass
+        def training_step(self, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
+            pass
 
-    def validation_step(self, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
-        pass
+        def validation_step(self, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
+            pass
 
-    def test_step(self, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
-        pass
+        def test_step(self, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
+            pass
 
-    def predict_step(self, *args: Any, **kwargs: Any) -> Any:
-        pass
+        def predict_step(self, *args: Any, **kwargs: Any) -> Any:
+            pass
 
-    def configure_optimizers(self) -> OptimizerLRScheduler:
-        pass
+        def configure_optimizers(self) -> OptimizerLRScheduler:
+            pass
+
 
 
 class DummyEnsemble(BaseEnsemble):
@@ -50,22 +51,31 @@ class DummyEnsemble(BaseEnsemble):
         return inputs
 
 
-
-class MedianEnsemble(BaseEnsemble):
-    """
-    Baseline - always consistent if base models are consistent
-    """
+# Baselines
+class RandomEnsemble(BaseEnsemble):
     def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
-        # inputs - B, L, K
-        # outputs - B
-        base_labels = torch.argmax(inputs, dim=2, keepdim=True)
-        labels = torch.median(base_labels, dim=1, keepdim=True)[0].squeeze()
-        return labels
+        # inputs (probas) - batch, base model, class
+        # outputs (label) - batch
+        B, N, K = inputs.shape
+        samples = torch.randint(high=N, size=(B, 1))
+        labels = inputs.argmax(dim=2)
+        print(labels.shape, samples.shape)
+        print(labels, samples)
+        return None, labels.gather(1, samples).squeeze()
+
+class MajorityVotingEnsemble(BaseEnsemble):
+    def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
+        # inputs (probas) - batch, base model, class
+        # outputs (label) - batch
+        B, N, K = inputs.shape
+        votes = inputs.argmax(dim=2)
+        result = votes.mode(dim=1)
+        return None, result.values
 
 class AverageEnsemble(BaseEnsemble):
     """
-    Baseline - averaged proba is not unimodal
-    inputs:
+    Baseline
+    Comments: not ordinal
     """
     def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
         # inputs (probas) - batch, base model, class
@@ -74,11 +84,27 @@ class AverageEnsemble(BaseEnsemble):
         labels = base_probas.argmax(dim=1)
         return base_probas, labels
 
-class ConvolutionEnsemble(BaseEnsemble):
+
+
+
+# Ordinal ensembles
+class MedianEnsemble(BaseEnsemble):
     """
+    Baseline
+    Comments: if base models are consistent, ensemble is ordinal
+    """
+    def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
+        # inputs - B, L, K
+        # outputs - B
+        base_labels = torch.argmax(inputs, dim=2, keepdim=True)
+        labels = torch.median(base_labels, dim=1, keepdim=True)[0].squeeze()
+        return None, labels
+
+class ConvolutionEnsemble_MovingAverage(BaseEnsemble):
+    """
+    Moving average strategy
     Base models should be
     - parametric (Binomial, Poisson, etc.) hard unimodal
-    Ensemble should guarantee unimodality (assuming truncating the probas is not a problem...)
     """
     def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
         # inputs - B, L, K
@@ -86,91 +112,35 @@ class ConvolutionEnsemble(BaseEnsemble):
         _, L, K = inputs.shape
         base_probas = inputs[:, 0]  # first base model
         for i in range(1, L):  # convolve with every other base model
-            padding = base_probas.shape[-1] - 1
-            padded_inputs = nn.functional.pad(inputs[:, i], pad=(0, padding), mode='constant', value=0)
-            base_probas = convolve(base_probas, padded_inputs, mode="full")
-        # base_probas = nn.functional.adaptive_avg_pool1d(base_probas, K)
-        base_probas /= base_probas.sum(dim=1, keepdim=True)
-        labels = base_probas.argmax(dim=1) // L  # very messy, see test-convolution-approach.py
-        return base_probas, labels
+            # padding = base_probas.shape[-1] - 1
+            # padded_inputs = nn.functional.pad(inputs[:, i], pad=(0, padding), mode='constant', value=0)
+            base_probas = convolve(base_probas, inputs[:, i], mode="full")  # shape: L * (K - 1) + 1
+        kernel_size = (L * K) - (L + K - 2)
+        ensemble_probas = nn.functional.avg_pool1d(base_probas.unsqueeze(dim=1),
+                                                   kernel_size=kernel_size, stride=1)  # moving average
+        ensemble_probas = ensemble_probas.squeeze()
+        ensemble_probas /= ensemble_probas.sum(dim=1, keepdim=True)
+        labels = ensemble_probas.argmax(dim=1)
+        return ensemble_probas, labels
 
-class NaiveWassersteinEnsemble(BaseEnsemble):
+class ConvolutionEnsemble_Stride(BaseEnsemble):
     """
+    Stride strategy
     Base models should be
-    - any (hard or soft) unimodal
-    Ensemble should guarantee unimodality
-    PROBLEM: Optimized solution is an uniform distribution
+    - parametric (Binomial, Poisson, etc.) hard unimodal
     """
     def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
         # inputs - B, L, K
         # outputs - B,
         _, L, K = inputs.shape
-
         base_probas = inputs[:, 0]  # first base model
-        for i in range(1, L):  # wasserstein projection with every other model
-            modes = inputs[:, i].argmax(dim=1)
-            base_probas /= base_probas.sum(dim=1, keepdim=True)
-            base_probas = torch.stack([
-                torch.tensor(unimodal_wasserstein(phat, y)[1], dtype=torch.float32, device=inputs.device)
-                for phat, y in zip(base_probas.cpu().detach().numpy(), modes.cpu().detach().numpy())
-            ])  # need to iterate over batch + use numpy arrays instead of tensors
-        labels = base_probas.argmax(dim=1)
-        return base_probas, labels
-
-class WassersteinEnsemble(BaseEnsemble):
-    """
-    Base models should be
-    - any (hard or soft) unimodal
-    Ensemble should guarantee unimodality
-    """
-    def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
-        # inputs - B, L, K
-        # outputs - B,
-        _, L, K = inputs.shape
-
-        modes = inputs.argmax(dim=2)
-        yproj = torch.stack([
-            torch.stack([
-                torch.tensor(unimodal_wasserstein(phat / phat.sum(), y)[1], dtype=torch.float32, device=inputs.device)
-                for phat, y in zip(inputs[:, i].cpu().detach().numpy(), modes[:, i].cpu().detach().numpy())
-            ]) for i in range(L)
-        ]).swapdims(0, 1)
-
-        # TODO: remove this...
-        debug_projection = False
-        if debug_projection:
-            nnn = 8
-            for i in range(nnn):
-                xxx = inputs[i]
-                yyy = yproj[i]
-                fig, axs = plt.subplots(2, L//2, figsize=(16, 6))
-                counter = 0
-                for j in range(L):
-                    axs.flatten()[counter].plot(xxx[j].cpu().detach().numpy(), label="input")
-                    axs.flatten()[counter].plot(yyy[j].cpu().detach().numpy(), label="projection")
-                    axs.flatten()[counter].set_title(f'L={j}')
-                    axs.flatten()[counter].grid(True)
-                    axs.flatten()[counter].legend(loc='best')
-                    counter += 1
-                fig.suptitle(f'Sample {i}')
-                fig.tight_layout()
-                fig.show()
-            print("done!")
-
-
-        labels = yproj.argmax(dim=2, keepdim=True)
-        return torch.median(labels, dim=1, keepdim=True)[0].squeeze()
-
-
-
-def wasserstein_ensemble_objective(X):
-    """
-    :param X: shape = (base_model, classes)
-    :return y: shape = (classes, )
-    """
-    pass
-
-
+        for i in range(1, L):  # convolve with every other base model
+            base_probas = convolve(base_probas, inputs[:, i], mode="full")
+        stride = L
+        ensemble_probas =  base_probas[:, ::stride]
+        ensemble_probas /= ensemble_probas.sum(dim=1, keepdim=True)
+        labels = ensemble_probas.argmax(dim=1)
+        return ensemble_probas, labels
 
 
 
