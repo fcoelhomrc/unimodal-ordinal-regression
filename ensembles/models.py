@@ -14,6 +14,9 @@ from torch.utils.data import Dataset, DataLoader
 
 import lightning as L
 
+import scipy.spatial.distance
+import einops
+
 from ensembles.utils import EnsembleDataset
 from src.losses import unimodal_wasserstein
 
@@ -142,7 +145,126 @@ class ConvolutionEnsemble_Stride(BaseEnsemble):
         labels = ensemble_probas.argmax(dim=1)
         return ensemble_probas, labels
 
+class WassersteinEnsemble_LP(BaseEnsemble):
+    """
+    LP solution for Wasserstein barycenter problem
+    Base models should be
+    - any
+    """
 
+    def __init__(self, verbose=True):
+        super().__init__()
+        self.verbose = verbose
+
+    def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
+        # inputs - B, L, K
+        # outputs - B,
+        B, L, K = inputs.shape
+
+        outputs = []
+        wasserstein_cost_matrix = scipy.spatial.distance.squareform(
+            scipy.spatial.distance.pdist(np.arange(K)[:, None])
+        )
+        for b in range(B):
+            base_probas = inputs[b]  # shape: L, K
+            base_probas = einops.rearrange(base_probas, "l k -> k l")
+            costs = np.zeros(K)
+            probas = []
+            for mode in range(K):
+                proba, sol = unimodal_wasserstein_barycenter_lp(
+                    base_probas.cpu().numpy(),
+                    wasserstein_cost_matrix,
+                    mode=mode,
+                    verbose=self.verbose,
+                )
+                costs[mode] = sol.fun
+                probas.append(proba)
+            best_mode = costs.argmin()
+            outputs.append(torch.tensor(probas[best_mode]))
+        ensemble_probas = torch.stack(outputs, dim=0).to(inputs.device)
+        labels = ensemble_probas.argmax(dim=1)
+        return ensemble_probas, labels
+
+
+
+def unimodal_wasserstein_barycenter_lp(A, M, mode, weights=None, verbose=False):
+    import scipy.sparse as sps
+    import scipy as sp
+
+    def get_A_ub(K, P, mode):
+        def get_mode_pattern(K, mode):
+            pat = np.zeros((K - 1, K))
+            for i in range(mode):
+                pat[i, i] = 1
+                pat[i, i + 1] = -1
+            for i in range(mode, K - 1):
+                pat[i, i] = -1
+                pat[i, i + 1] = 1
+            return pat
+        blocks = [
+            sps.coo_matrix(
+                np.kron(np.ones(K), get_mode_pattern(K, mode))
+            )
+            for i in range(P)
+        ]
+        full = sps.block_diag(blocks)
+        pad = np.zeros((P * (K - 1), K))
+        full = np.concatenate((full.toarray(), pad), axis=1)
+        return full
+
+    if weights is None:
+        weights = np.ones(A.shape[1]) / A.shape[1]
+    else:
+        assert len(weights) == A.shape[1]
+
+    n_distributions = A.shape[1]
+    n = A.shape[0]
+    n2 = n * n
+    c = np.zeros((0))
+    b_eq1 = np.zeros((0))
+    for i in range(n_distributions):
+        c = np.concatenate((c, M.ravel() * weights[i]))
+        b_eq1 = np.concatenate((b_eq1, A[:, i]))
+    c = np.concatenate((c, np.zeros(n)))
+    lst_idiag1 = [sps.kron(sps.eye(n), np.ones((1, n))) for i in range(n_distributions)]
+    #  row constraints - eq
+    A_eq1 = sps.hstack(
+        (sps.block_diag(lst_idiag1), sps.coo_matrix((n_distributions * n, n)))
+    )
+    # columns constraints - eq
+    lst_idiag2 = []
+    lst_eye = []
+    for i in range(n_distributions):
+        if i == 0:
+            lst_idiag2.append(sps.kron(np.ones((1, n)), sps.eye(n)))
+            lst_eye.append(-sps.eye(n))
+        else:
+            lst_idiag2.append(sps.kron(np.ones((1, n)), sps.eye(n - 1, n)))
+            lst_eye.append(-sps.eye(n - 1, n))
+    A_eq2 = sps.hstack((sps.block_diag(lst_idiag2), sps.vstack(lst_eye)))
+    b_eq2 = np.zeros((A_eq2.shape[0]))
+    # full problem
+    A_eq = sps.vstack((A_eq1, A_eq2))
+    b_eq = np.concatenate((b_eq1, b_eq2))
+    # unimodal part
+    # row constraints - ineq
+    ## there are no row constraints
+    # columns constraints - ineq
+    A_ub = get_A_ub(n, n_distributions, mode)
+    b_ub = np.zeros(A_ub.shape[0])
+    A_ub = sps.coo_matrix(A_ub)
+
+    solver = "highs"
+    options = {"disp": verbose}
+    sol = sp.optimize.linprog(
+        c, A_eq=A_eq, b_eq=b_eq, A_ub=A_ub, b_ub=b_ub,
+        method=solver, options=options
+    )
+    if sol.success:
+        x = sol.x
+        b = x[-n:]
+        return b, sol
+    return None
 
 
 if __name__ == "__main__":
