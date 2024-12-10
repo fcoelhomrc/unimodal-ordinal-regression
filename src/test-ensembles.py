@@ -15,12 +15,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument('dataset')
 parser.add_argument('model')
 parser.add_argument('losses')
-parser.add_argument('--datadir', default='../predictions')   # TODO: check this
+parser.add_argument('losses_lambda')
+parser.add_argument('losses_lambda_values')
+
+
+parser.add_argument('--datadir', default='predictions')   # TODO: check this
 parser.add_argument('--reps', nargs='+', type=int)
-
-
-parser.add_argument('--lamda')
-parser.add_argument('--print-lambda', action='store_true')
 parser.add_argument('--only-metric', type=int)
 
 args = parser.parse_args()
@@ -38,9 +38,9 @@ import ensembles.models
 
 import os
 
-save_dir = "../predictions"  # for saving predictions (predicted probas + ground truth label)
-if not os.path.exists(save_dir):
-    os.mkdir(save_dir)
+# save_dir = "../predictions"  # for saving predictions (predicted probas + ground truth label)
+# if not os.path.exists(save_dir):
+#    os.mkdir(save_dir)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -53,7 +53,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 try:
     models = [getattr(ensembles.models, args.model)()]
 except Exception as e:
-    print("omigod")
+    print("Failed to load model: {}".format(e))
 
 def is_proba_available(ensemble):
     no_probas_available = ["RandomEnsemble", "MajorityVotingEnsemble", "MedianEnsemble"]
@@ -62,8 +62,14 @@ def is_proba_available(ensemble):
 
 def compute_metrics(rep, metrics_list, model):
     losses = args.losses.split(" ")
+    losses_lambda = args.losses_lambda.split(" ")
+    losses_lambda_values = args.losses_lambda_values.split(" ")
+
+    hyperparams = [None] * len(losses) + losses_lambda_values
+    losses_complete = losses + losses_lambda
+
     batch_size = 32
-    ds = EnsembleDataset(dataset=args.dataset, loss=losses, rep=rep)
+    ds = EnsembleDataset(dataset=args.dataset, loss=losses_complete, rep=rep, hyperparam=hyperparams)
     dl = DataLoader(ds, batch_size=batch_size, shuffle=True)
 
     YY_true = []

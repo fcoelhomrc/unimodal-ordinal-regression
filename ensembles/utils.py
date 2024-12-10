@@ -9,13 +9,15 @@ from torch.utils.data import Dataset, DataLoader
 
 from src.data import FOCUSPATH
 
-ROOT_DIR = os.path.join("..", "predictions")
+ROOT_DIR = os.path.join("predictions")
 
 class EnsembleDataset(Dataset):
-    def __init__(self, dataset: str, loss: list, rep: int):
+    def __init__(self, dataset: str, loss: list, rep: int, hyperparam: list=None):
         self.name = dataset.upper()
         self.loss = loss
         self.rev = rep
+        self.hyperparam = hyperparam if hyperparam is not None else [None] * len(loss)
+        assert len(loss) == len(hyperparam)
 
         self.inputs = None
         self.labels = None
@@ -25,7 +27,12 @@ class EnsembleDataset(Dataset):
         xx = []
         yy = []
         for i, loss in enumerate(self.loss):
-            key = f"{self.name}-{loss}-{self.rev}.pt"
+
+            if self.hyperparam[i] is None:
+                key = f"{self.name}-{loss}-{self.rev}.pt"
+            else:
+                key = f"{self.name}-{loss}-{self.rev}-lambda-{self.hyperparam[i]}.pt"
+
             if not self._is_valid_key(key):
                 continue
             x = torch.load(os.path.join(ROOT_DIR, f"pred-{key}"), weights_only=True)

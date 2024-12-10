@@ -3,8 +3,10 @@
 TABULAR_DATASETS=""
 IMAGE_DATASETS="FOCUSPATH"
 LOSSES="BinomialUnimodal_CE CrossEntropy"
-#LOSSES_LAMBDA="PolyaUnimodal_Regularized"
+LOSSES_LAMBDA="CO2"
+
 MODELS="RandomEnsemble AverageEnsemble MajorityVotingEnsemble MedianEnsemble"
+
 
 for DATASETS_TYPE in "TABULAR" "IMAGE"; do
 if [ "$DATASETS_TYPE" == "TABULAR" ]; then
@@ -18,6 +20,17 @@ echo "\usepackage{xcolor}"
 echo "\begin{document}"
 echo "\begin{tabular}{llllllllllllll}"
 for DATASET in $DATASETS; do
+
+    LOSSES_LAMBDA_VALUES=""
+    for LOSS in $LOSSES_LAMBDA; do
+      LAMBDA=$(python3 src/test-best-lambda.py $DATASET $LOSS --datadir=datasets --modeldir=saved-models)
+    if [ -z "$LOSSES_LAMBDA_VALUES" ]; then
+      LOSSES_LAMBDA_VALUES="$LAMBDA"
+    else
+      LOSSES_LAMBDA_VALUES="$LOSSES_LAMBDA_VALUES $LAMBDA"
+    fi
+    done
+    # echo "losses lambda: $LOSSES_LAMBDA -> best values: $LOSSES_LAMBDA_VALUES"
     echo -n "\\bf $DATASET" # & \bf Accuracy & \bf MAE & \bf Times Unimodal \\\\"
     for MODEL in $MODELS; do echo -n " & $MODEL"; done
     echo " \\\\"
@@ -31,7 +44,7 @@ for DATASET in $DATASETS; do
         if [ $METRIC -eq 5 ]; then echo -n "ZME"; fi
         if [ $METRIC -eq 6 ]; then echo -n "NLL"; fi
         for MODEL in $MODELS; do
-            python3 test-ensembles.py "$DATASET" "$MODEL" "$LOSSES" --reps 1 2 3 4 --only-metric $METRIC --datadir=../datasets
+            python3 src/test-ensembles.py "$DATASET" "$MODEL" "$LOSSES" "$LOSSES_LAMBDA" "$LOSSES_LAMBDA_VALUES" --reps 1 2 3 4 --only-metric $METRIC --datadir=predictions
         done
         echo " \\\\"
     done

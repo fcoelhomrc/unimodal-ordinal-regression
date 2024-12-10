@@ -9,12 +9,16 @@ parser = argparse.ArgumentParser()
 parser.add_argument('dataset')
 parser.add_argument('loss')
 parser.add_argument('--datadir', default='/data/ordinal')
+parser.add_argument('--modeldir', default='predictions')
+
 args = parser.parse_args()
 
 from torch.utils.data import DataLoader
 from torchvision import transforms
 import torch
 import metrics, losses, data
+import os
+
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -41,7 +45,8 @@ def compute_metrics(rep, metrics_list, lamda):
         model_name = f'model-{args.dataset}-{args.loss}-{rep}.pth'
     else:
         model_name = f'model-{args.dataset}-{args.loss}-{rep}-lambda-{lamda}.pth'
-    model = torch.load(model_name, map_location=device)
+    model_name = os.path.join(args.modeldir, model_name)
+    model = torch.load(model_name, map_location=device, weights_only=False)
     model.eval()
     YY_pred = []
     YY_true = []
