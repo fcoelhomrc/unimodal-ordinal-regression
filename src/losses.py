@@ -275,6 +275,27 @@ class PoissonUnimodal(OrdinalLoss):
         return KK*torch.log(ypred) - ypred - log_fact(KK)
 
 
+class PoissonUnimodal_V2(OrdinalLoss):
+    """
+    Classes computed from 0 to K-1, instead of 1 to K
+    """
+    def how_many_outputs(self):
+        return 1
+
+    def forward(self, ypred, ytrue):
+        return ce(self.activation(ypred), ytrue)
+
+    def to_proba(self, ypred):
+        return F.softmax(self.activation(ypred), 1)
+
+    def activation(self, ypred):
+        # internal function used by forward() and to_proba()
+        # they apply softplus (relu) to avoid log(negative)
+        ypred = F.softplus(ypred)
+        KK = torch.arange(0., self.K, device=ypred.device)[None]
+        return (KK + 1)*torch.log(ypred) - ypred - log_fact(KK + 1)
+
+
 ################################################################################
 # Negative Binomial CE                                                         #
 # Our new idea :)                                                              #
@@ -362,20 +383,60 @@ class PolyaUnimodal(OrdinalLoss):
         den = log_fact(KK) + log_fact(rr)
         return num - den
 
-
-class PolyaUnimodal_Regularized(PolyaUnimodal):
+class PolyaUnimodal_V2(OrdinalLoss):
     """
-    Induce the variance to keep most of the spread between [1, 2, ..., K]
+    Classes computed from 0 to K-1, instead of 1 to K
     """
-    def __init__(self, K, lamda=100.):
-        super().__init__(K)
-        self.lamda = lamda
+    def how_many_outputs(self):
+        return 2
 
     def forward(self, ypred, ytrue):
-        ce_loss = super().forward(ypred, ytrue)
-        norm = ypred.sum(dim=1)
-        norm_loss = torch.abs(1. - norm)
-        return ce_loss + (self.lamda * norm_loss)
+        log_probs = self.to_log_proba(ypred)
+        return ce(log_probs, ytrue)
+
+    def to_proba(self, ypred):
+        log_probs = self.to_log_proba(ypred)
+        return F.softmax(log_probs, 1)
+
+    def to_log_proba(self, ypred):
+        log_probs = F.logsigmoid(ypred[:, 0]).reshape(-1, 1)
+        log_inv_probs = F.logsigmoid(-ypred[:, 0]).reshape(-1, 1)
+        rr = F.softplus(ypred[:, 1]).reshape(-1, 1)
+
+        KK = torch.arange(0., self.K, device=ypred.device).reshape(1, -1)
+        num = log_fact(KK + rr) + (KK * log_inv_probs) + (rr * log_probs)
+        den = log_fact(KK + 1) + log_fact(rr)
+
+        return num - den
+
+
+class PolyaUnimodal_V3(OrdinalLoss):
+    """
+    to_proba does normalization explicitly instead of relying on softmax
+    """
+    def how_many_outputs(self):
+        return 2
+
+    def forward(self, ypred, ytrue):
+        log_probs = self.to_log_proba(ypred)
+        return ce(log_probs, ytrue)
+
+    def to_proba(self, ypred):
+        log_probs = self.to_log_proba(ypred)
+        probas = torch.exp(log_probs)
+        normalization = probas.sum(dim=-1, keepdim=True).detach()
+        return probas / normalization
+
+    def to_log_proba(self, ypred):
+        log_probs = F.logsigmoid(ypred[:, 0]).reshape(-1, 1)
+        log_inv_probs = F.logsigmoid(-ypred[:, 0]).reshape(-1, 1)
+        rr = F.softplus(ypred[:, 1]).reshape(-1, 1)
+
+        KK = torch.arange(1., self.K + 1, device=ypred.device).reshape(1, -1)
+        num = log_fact(KK + rr - 1) + ((KK - 1) * log_inv_probs) + (rr * log_probs)
+        den = log_fact(KK) + log_fact(rr)
+        return num - den
+
 
 
 ################################################################################
