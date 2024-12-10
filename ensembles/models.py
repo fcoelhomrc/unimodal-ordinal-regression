@@ -60,10 +60,8 @@ class RandomEnsemble(BaseEnsemble):
         # inputs (probas) - batch, base model, class
         # outputs (label) - batch
         B, N, K = inputs.shape
-        samples = torch.randint(high=N, size=(B, 1))
+        samples = torch.randint(high=N, size=(B, 1)).to(inputs.device)
         labels = inputs.argmax(dim=2)
-        print(labels.shape, samples.shape)
-        print(labels, samples)
         return None, labels.gather(1, samples).squeeze()
 
 class MajorityVotingEnsemble(BaseEnsemble):
@@ -152,7 +150,7 @@ class WassersteinEnsemble_LP(BaseEnsemble):
     - any
     """
 
-    def __init__(self, verbose=True):
+    def __init__(self, verbose=False):
         super().__init__()
         self.verbose = verbose
 
