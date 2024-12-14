@@ -296,6 +296,31 @@ class PoissonUnimodal_V2(OrdinalLoss):
         return (KK + 1)*torch.log(ypred) - ypred - log_fact(KK + 1)
 
 
+class PoissonUnimodal_V3(OrdinalLoss):
+    """
+    Explicitly use truncated Poisson
+    Classes from 0 to K-1
+    """
+    def how_many_outputs(self):
+        return 1
+
+    def forward(self, ypred, ytrue):
+        log_probs = torch.log(self.activation(ypred) + 1e-6)
+        return F.nll_loss(log_probs, ytrue, reduction='none')
+
+    def to_proba(self, ypred):
+        return self.activation(ypred)
+
+    def activation(self, ypred):
+        # internal function used by forward() and to_proba()
+        KK = torch.arange(0., self.K, device=ypred.device)[None]
+        probs = (ypred**KK) * torch.exp(-ypred) / fact(KK)
+        # truncated Poisson
+        probs = probs / probs.sum(1, True).detach()
+        return probs
+
+
+
 ################################################################################
 # Negative Binomial CE                                                         #
 # Our new idea :)                                                              #
@@ -349,6 +374,7 @@ class NegativeBinomialUnimodal(OrdinalLoss):
         num = log_fact(KK + rr - 1) + ((KK - 1) * log_inv_probs) + (rr * log_probs)
         den = log_fact(KK) + log_fact(rr)
         return num - den
+
 
 class PolyaUnimodal(OrdinalLoss):
     def how_many_outputs(self):
@@ -437,6 +463,32 @@ class PolyaUnimodal_V3(OrdinalLoss):
         den = log_fact(KK) + log_fact(rr)
         return num - den
 
+
+class PolyaUnimodal_V4(OrdinalLoss):
+    """
+    Explicitly use truncated distribution.
+    Classes from 0 to K-1.
+    """
+    def how_many_outputs(self):
+        return 2
+
+    def forward(self, ypred, ytrue):
+        log_probs = torch.log(self.activation(ypred) + 1e-6)
+        return F.nll_loss(log_probs, ytrue, reduction='none')
+
+    def to_proba(self, ypred):
+        return self.activation(ypred)
+
+    def activation(self, ypred):
+        pp = F.sigmoid(ypred[:, 0]).reshape(-1, 1)
+        inv_pp = F.sigmoid(-ypred[:, 0]).reshape(-1, 1)
+        rr = F.softplus(ypred[:, 1]).reshape(-1, 1)
+
+        KK = torch.arange(0., self.K, device=ypred.device).reshape(1, -1)
+        probas = torch.exp(torch.lgamma(KK + rr) - torch.lgamma(KK + 1) - torch.lgamma(rr))
+        probas = probas * torch.pow(inv_pp, KK) * torch.pow(pp, rr)
+        probas = probas / probas.sum(1, True).detach()
+        return probas
 
 
 ################################################################################
