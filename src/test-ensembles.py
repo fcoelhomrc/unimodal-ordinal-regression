@@ -3,6 +3,7 @@
 # silence warning when using this without GPU
 import warnings
 
+from mpmath import hyper
 from tqdm import tqdm
 from torch.backends.mkl import verbose
 
@@ -64,6 +65,11 @@ def compute_metrics(rep, metrics_list, model):
     losses = args.losses.split(" ")
     losses_lambda = args.losses_lambda.split(" ")
     losses_lambda_values = args.losses_lambda_values.split(" ")
+
+    if losses_lambda == [""]:
+        losses_lambda = []
+    if losses_lambda_values == [""]:
+        losses_lambda_values = []
 
     hyperparams = [None] * len(losses) + losses_lambda_values
     losses_complete = losses + losses_lambda
