@@ -143,48 +143,6 @@ class ConvolutionEnsemble_Stride(BaseEnsemble):
         labels = ensemble_probas.argmax(dim=1)
         return ensemble_probas, labels
 
-class WassersteinEnsemble_LP(BaseEnsemble):
-    """
-    LP solution for Wasserstein barycenter problem
-    Base models should be
-    - any
-    """
-
-    def __init__(self, verbose=False):
-        super().__init__()
-        self.verbose = verbose
-
-    def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
-        # inputs - B, L, K
-        # outputs - B,
-        B, L, K = inputs.shape
-
-        outputs = []
-        wasserstein_cost_matrix = scipy.spatial.distance.squareform(
-            scipy.spatial.distance.pdist(np.arange(K)[:, None])
-        )
-        for b in range(B):
-            base_probas = inputs[b]  # shape: L, K
-            base_probas = einops.rearrange(base_probas, "l k -> k l")
-            costs = np.zeros(K)
-            probas = []
-            for mode in range(K):
-                proba, sol = unimodal_wasserstein_barycenter_lp(
-                    base_probas.cpu().numpy(),
-                    wasserstein_cost_matrix,
-                    mode=mode,
-                    verbose=self.verbose,
-                )
-                costs[mode] = sol.fun
-                probas.append(proba)
-            best_mode = costs.argmin()
-            outputs.append(torch.tensor(probas[best_mode]))
-        ensemble_probas = torch.stack(outputs, dim=0).to(inputs.device)
-        labels = ensemble_probas.argmax(dim=1)
-        return ensemble_probas, labels
-
-
-
 def unimodal_wasserstein_barycenter_lp(A, M, mode, weights=None, verbose=False):
     import scipy.sparse as sps
     import scipy as sp
@@ -265,59 +223,130 @@ def unimodal_wasserstein_barycenter_lp(A, M, mode, weights=None, verbose=False):
     return None
 
 
-if __name__ == "__main__":
 
-    plt.figure()
-    losses = [
-        "CrossEntropy", "POM", "OrdinalEncoding", "CDW_CE", "UnimodalNet"
-    ]
+class WassersteinEnsemble_LP(BaseEnsemble):
+    """
+    LP solution for Wasserstein barycenter problem
+    Base models should be
+    - any
+    """
 
-    losses = [
-    "CrossEntropy", "POM", "OrdinalEncoding", "CDW_CE", "UnimodalNet",
-    "PoissonUnimodal", "VS_SL", "ORD_ACL", "CrossEntropy_UR", "BinomialUnimodal_CE",
-    ]
+    def __init__(self, verbose=False):
+        super().__init__()
+        self.verbose = verbose
 
-    results = {loss: [] for loss in losses}
-    results["Ensemble"] = []
-    revs = [1, 2, 3, 4]
-    # revs = [1]
-    model = WassersteinEnsemble()
+    def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
+        # inputs - B, L, K
+        # outputs - B,
+        B, L, K = inputs.shape
 
-    compute_single = False
-    for rev in revs:
-        # Compute for one at a time
-        for loss in losses:
-            if not compute_single:
-                break
-            ds = EnsembleDataset(dataset="FOCUSPATH", loss=[loss], rep=rev)
-            batch_size = 32
-            dl = DataLoader(ds, batch_size=batch_size, shuffle=True)
+        outputs = []
+        wasserstein_cost_matrix = scipy.spatial.distance.squareform(
+            scipy.spatial.distance.pdist(np.arange(K)[:, None])
+        )
+        for b in range(B):
+            base_probas = inputs[b]  # shape: L, K
+            base_probas = einops.rearrange(base_probas, "l k -> k l")
+            costs = np.zeros(K)
+            probas = []
+            for mode in range(K):
+                proba, sol = unimodal_wasserstein_barycenter_lp(
+                    base_probas.cpu().numpy(),
+                    wasserstein_cost_matrix,
+                    mode=mode,
+                    verbose=self.verbose,
+                )
+                costs[mode] = sol.fun
+                probas.append(proba)
 
-            total_acc = 0
-            for x, y in dl:
-                ypred = model(x)
-                acc = (ypred == y).sum()
-                total_acc += acc.item()
-            total_acc /= len(ds)
-            print(f"{loss} -> {total_acc:3f}")
-            results[loss].append(total_acc)
+            # handle ties by randomly selecting a winner
+            min_cost = costs.min()
+            min_indices = np.where(np.isclose(costs, min_cost))[0]
+            # best_mode = np.random.choice(min_indices)
+            best_mode = min_indices.mean().astype(int)
+            output = torch.tensor(probas[best_mode])
+            outputs.append(output)
 
-        # Compute with all at same time
-        ds = EnsembleDataset(dataset="FOCUSPATH", loss=losses, rep=rev)
-        batch_size = 32
-        dl = DataLoader(ds, batch_size=batch_size, shuffle=True)
 
-        total_acc = 0
-        for x, y in dl:
-            ypred = model(x)
-            acc = (ypred == y).sum()
-            total_acc += acc.item()
+        ensemble_probas = torch.stack(outputs, dim=0).to(inputs.device)
+        labels = ensemble_probas.argmax(dim=1)
+        return ensemble_probas, labels
 
-        total_acc /= len(ds)
-        results["Ensemble"].append(total_acc)
 
-    for key, value in results.items():
-        if len(value) > 0:
-            value = np.array(value)
-            print(f"{key} -> {value.mean():.2f} ± {2 * value.std():.2f}")
+class FastWassersteinEnsemble_LP(BaseEnsemble):
+    """
+    LP solution for Wasserstein barycenter problem.
+    Binary search over modes to speed up inference.
+    Base models should be
+    - any
+    """
 
+    def __init__(self, verbose=False):
+        super().__init__()
+        self.verbose = verbose
+
+    def search_objective(self, mode, probas, cost_matrix, only_cost=True):
+        probas, sol = unimodal_wasserstein_barycenter_lp(
+                probas.cpu().numpy(),
+                cost_matrix,
+                mode=mode,
+                verbose=self.verbose,
+            )
+        if only_cost:
+            return sol.fun
+        else:
+            return sol.fun, probas, sol
+
+
+    def ternary_search(self, base_probas, wasserstein_cost_matrix, K):
+        delta = 5  # Total of classes left when we switch to brute force
+        left = 0
+        right = K - 1
+        while right - left > delta:
+            m1 = left + (right - left) // 3
+            m2 = right - (right - left) // 3
+
+            if (self.search_objective(m1, base_probas, wasserstein_cost_matrix)
+                    < self.search_objective(m2, base_probas, wasserstein_cost_matrix)):
+                right = m2  # Minimum lies in [left, m2]
+            else:
+                left = m1  # Minimum lies in [m1, right]
+
+        # Perform brute force on the final small range
+        brute_force_range = range(left, right)
+        costs = 1e3 * np.ones(K)  # set discarded costs to a very large number, and keep mode<->index correspondence
+        probas = np.empty((K, K))
+        for mode in brute_force_range:
+            cost, proba, sol = self.search_objective(
+                mode, base_probas, wasserstein_cost_matrix, only_cost=False
+            )
+            costs[mode] = cost
+            probas[mode] = proba
+
+        # handle ties by randomly selecting a winner
+        min_cost = costs.min()
+        min_indices = np.where(np.isclose(costs, min_cost))[0]
+        # best_mode = np.random.choice(min_indices)
+        best_mode = min_indices.mean().astype(int)
+
+        return torch.tensor(probas[best_mode])
+
+    def forward(self, inputs, *args: Any, **kwargs: Any) -> Any:
+        # inputs - B, L, K
+        # outputs - B,
+        B, L, K = inputs.shape
+
+        outputs = []
+        wasserstein_cost_matrix = scipy.spatial.distance.squareform(
+            scipy.spatial.distance.pdist(np.arange(K)[:, None])
+        )
+
+        for b in range(B):
+            base_probas = inputs[b]  # shape: L, K
+            base_probas = einops.rearrange(base_probas, "l k -> k l")
+            output = self.ternary_search(base_probas, wasserstein_cost_matrix, K)
+            outputs.append(output)
+
+        ensemble_probas = torch.stack(outputs, dim=0).to(inputs.device)
+        labels = ensemble_probas.argmax(dim=1)
+        return ensemble_probas, labels
