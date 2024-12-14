@@ -320,6 +320,32 @@ class PoissonUnimodal_V3(OrdinalLoss):
         return probs
 
 
+class PoissonUnimodal_V4(OrdinalLoss):
+    """
+    Explicitly use truncated Poisson
+    Classes from 0 to K-1
+    """
+    def how_many_outputs(self):
+        return 1
+
+    def forward(self, ypred, ytrue):
+        log_probs = torch.log(self.activation(ypred) + 1e-6)
+        return F.nll_loss(log_probs, ytrue, reduction='none')
+
+    def to_proba(self, ypred):
+        return self.activation(ypred)
+
+    def activation(self, ypred):
+        # internal function used by forward() and to_proba()
+        KK = torch.arange(0., self.K, device=ypred.device)[None]
+        probs = torch.pow(ypred, KK) * torch.exp(-ypred)
+        probs = probs / torch.exp(torch.lgamma(KK + 1))
+        # truncated Poisson
+        probs = probs / probs.sum(1, True).detach()
+        return probs
+
+
+
 
 ################################################################################
 # Negative Binomial CE                                                         #
