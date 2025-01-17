@@ -1,4 +1,5 @@
 import torch
+from losses import unimodal_wasserstein
 
 def acc(ppred, ypred, ytrue):
     return (ypred == ytrue).float().mean()
@@ -80,3 +81,15 @@ def spearman(ppred, ypred, ytrue):
 def kendall_tau(ppred, ypred, ytrue):
     import scipy.stats
     return scipy.stats.kendalltau(ypred.cpu(), ytrue.cpu()).statistic
+
+def wasserstein_metric(ppred, ypred, ytrue):
+    N, K = ppred.shape  # batch, n_classes
+    metric = torch.zeros(N)
+    for n in range(N):
+        costs = torch.zeros(K)
+        for mode in range(K):
+            cost, _ = unimodal_wasserstein(ppred[n].cpu().numpy(), mode)
+            costs[mode] = cost
+        metric[n] = torch.min(costs)
+    metric_normalized = 1 / (1 + torch.pow(metric, exponent=2))
+    return metric_normalized

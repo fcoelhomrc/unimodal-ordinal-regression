@@ -105,10 +105,11 @@ metrics_list = [
     metrics.Percentage(metrics.quadratic_weighted_kappa),
     metrics.Percentage(metrics.kendall_tau),
     metrics.Percentage(metrics.times_unimodal_wasserstein),
+    metrics.Percentage(metrics.wasserstein_metric),
     metrics.zero_mean_error,
     metrics.negative_log_likelihood,
 ]
-precisions = [1, 2, 1, 1, 1, 2, 2]
+precisions = [1, 2, 1, 1, 1, 1, 2, 2]
 
 if args.only_metric is not None:
     metrics_list = [metrics_list[args.only_metric]]
