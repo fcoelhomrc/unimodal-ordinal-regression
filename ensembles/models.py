@@ -259,11 +259,11 @@ class WassersteinEnsemble_LP(BaseEnsemble):
                 costs[mode] = sol.fun
                 probas.append(proba)
 
-            # handle ties by randomly selecting a winner
+            # handle ties
             min_cost = costs.min()
             min_indices = np.where(np.isclose(costs, min_cost))[0]
-            # best_mode = np.random.choice(min_indices)
-            best_mode = min_indices.mean().astype(int)
+            # best_mode = np.random.choice(min_indices)   # random is bad
+            best_mode = min_indices.mean().astype(int)   # mean is better
             output = torch.tensor(probas[best_mode])
             outputs.append(output)
 
