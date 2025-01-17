@@ -92,4 +92,4 @@ def wasserstein_metric(ppred, ypred, ytrue):
             costs[mode] = cost
         metric[n] = torch.min(costs)
     metric_normalized = 1 / (1 + torch.pow(metric, exponent=2))
-    return metric_normalized
+    return metric_normalized.mean()
