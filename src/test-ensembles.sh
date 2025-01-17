@@ -5,7 +5,7 @@ IMAGE_DATASETS="FOCUSPATH SMEAR2005 FGNET"
 LOSSES="CrossEntropy BinomialUnimodal_CE"
 LOSSES_LAMBDA="CO2"
 
-MODELS="RandomEnsemble AverageEnsemble MajorityVotingEnsemble MedianEnsemble WassersteinEnsemble_LP FastWassersteinEnsemble_LP"
+MODELS="RandomEnsemble AverageEnsemble MajorityVotingEnsemble MedianEnsemble FastWassersteinEnsemble_LP"
 
 for DATASETS_TYPE in "TABULAR" "IMAGE"; do
 if [ "$DATASETS_TYPE" == "TABULAR" ]; then
